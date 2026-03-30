@@ -1,0 +1,21 @@
+# scan-it: Docker Compose for easy security scanning
+#
+# Usage:
+#   cd /path/to/your/project
+#   docker compose -f /path/to/scan-it/docker-compose.yml run --rm scan-it [mode]
+#
+# Or with environment variables:
+#   SCAN_TARGET=/path/to/project docker compose run --rm scan-it full --format json
+
+services:
+  scan-it:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ${SCAN_TARGET:-.}:/app:ro
+      - ${SCAN_OUTPUT:-./scan-it-reports}:/output
+    environment:
+      - SCAN_MODE=${SCAN_MODE:-full}
+    # Default: full scan with markdown output
+    # Override via: docker compose run --rm scan-it sast --format json

@@ -1,0 +1,80 @@
+# scan-it default configuration
+# Override by mounting your own config: -v ./my-config.yml:/opt/scan-it/config/scan-config.yml
+
+scan:
+  # Modes: full, sast, deps, owasp, guardrails
+  default_mode: full
+
+  # Output formats: markdown (always), json, junit
+  formats:
+    - markdown
+
+  # Exclusion patterns for file scanning
+  exclude_dirs:
+    - node_modules
+    - .venv
+    - venv
+    - __pycache__
+    - .git
+    - dist
+    - build
+    - .next
+    - coverage
+
+  exclude_files:
+    - "*.min.js"
+    - "*.bundle.js"
+    - "*.map"
+
+sast:
+  semgrep:
+    rulesets:
+      - p/owasp-top-ten
+      - p/security-audit
+    severity_threshold: WARNING
+
+  bandit:
+    confidence: MEDIUM
+    severity: MEDIUM
+
+  eslint:
+    plugins:
+      - security
+
+deps:
+  npm_audit:
+    level: moderate
+  pip_audit:
+    enabled: true
+  trivy:
+    severity: "CRITICAL,HIGH,MEDIUM"
+    skip_dirs:
+      - node_modules
+      - .venv
+
+owasp:
+  # Safety constraints for dynamic testing
+  max_requests_per_endpoint: 10
+  rate_limit_delay_ms: 100
+  safe_payloads_only: true
+  passive_mode_for_production: true
+
+guardrails:
+  # NeMo AI safety test categories
+  min_tests_per_category: 10
+  categories:
+    - prompt_injection
+    - jailbreak
+    - toxicity_bias
+    - topic_boundary
+    - pii_leakage
+    - hallucination
+
+reporting:
+  # Risk matrix: likelihood x impact
+  risk_levels:
+    critical: { min: 20, max: 25 }
+    high: { min: 12, max: 19 }
+    medium: { min: 6, max: 11 }
+    low: { min: 2, max: 5 }
+    informational: { min: 1, max: 1 }
