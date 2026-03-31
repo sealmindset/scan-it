@@ -34,7 +34,8 @@ RUN pip install --no-cache-dir \
     pip-audit \
     pyyaml \
     jinja2 \
-    rich
+    rich \
+    anthropic
 
 # Install Node.js security tools
 RUN npm install -g \

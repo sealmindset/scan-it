@@ -21,6 +21,22 @@ shift || true
 MODE="${1:-full}"
 shift || true
 
+# Check for --ai-validate flag in remaining args
+AI_VALIDATE=""
+EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ai-validate)
+            AI_VALIDATE="--ai-validate"
+            shift
+            ;;
+        *)
+            EXTRA_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
 # Resolve target to absolute path
 TARGET="$(cd "$TARGET" 2>/dev/null && pwd || echo "$TARGET")"
 
@@ -46,11 +62,20 @@ echo "Mode: $MODE"
 echo "Output: $OUTPUT_DIR"
 echo ""
 
+# Load .env file if present (for AI provider credentials, etc.)
+ENV_FILE_FLAG=""
+if [ -f "${SCRIPT_DIR}/.env" ]; then
+    ENV_FILE_FLAG="--env-file ${SCRIPT_DIR}/.env"
+elif [ -f "${TARGET}/.env" ]; then
+    ENV_FILE_FLAG="--env-file ${TARGET}/.env"
+fi
+
 docker run --rm \
     -v "$TARGET":/app:ro \
     -v "$OUTPUT_DIR":/output \
+    ${ENV_FILE_FLAG:+$ENV_FILE_FLAG} \
     "$IMAGE_NAME" \
-    "$MODE" "$@"
+    "$MODE" ${AI_VALIDATE:+$AI_VALIDATE} "${EXTRA_ARGS[@]}"
 
 echo ""
 echo "Reports saved to: $OUTPUT_DIR/"

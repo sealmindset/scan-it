@@ -5,6 +5,7 @@ SCAN_MODE="${1:-full}"
 FORMAT_FLAG=""
 TARGET_DIR="/app"
 OUTPUT_DIR="/output"
+AI_VALIDATE=""
 
 # Parse arguments
 shift || true
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
         --output)
             OUTPUT_DIR="$2"
             shift 2
+            ;;
+        --ai-validate)
+            AI_VALIDATE="--ai-validate"
+            shift
             ;;
         *)
             shift
@@ -44,4 +49,5 @@ exec python3 "${SCAN_IT_HOME}/src/scanner.py" \
     --mode "$SCAN_MODE" \
     --target "$TARGET_DIR" \
     --output "$OUTPUT_DIR" \
-    ${FORMAT_FLAG:+--format "$FORMAT_FLAG"}
+    ${FORMAT_FLAG:+--format "$FORMAT_FLAG"} \
+    ${AI_VALIDATE:+$AI_VALIDATE}

@@ -15,6 +15,9 @@ services:
     volumes:
       - ${SCAN_TARGET:-.}:/app:ro
       - ${SCAN_OUTPUT:-./scan-it-reports}:/output
+    env_file:
+      - path: .env
+        required: false
     environment:
       - SCAN_MODE=${SCAN_MODE:-full}
     # Default: full scan with markdown output

@@ -147,6 +147,26 @@ class Reporter:
                 lines.append("")
                 lines.append(f"**What:** {f.get('description', 'N/A')}")
                 lines.append("")
+
+                # AI Validation section (populated by Phase 4.5)
+                if f.get("validation"):
+                    v = f["validation"]
+                    lines.append("**Validation:**")
+                    lines.append("")
+                    lines.append(f"- **AI Assessment:** True Positive "
+                                 f"(confidence: {v.get('confidence', 'N/A')})")
+                    lines.append(f"- **Reasoning:** {v.get('reasoning', 'N/A')}")
+                    lines.append(f"- **What to Test:** {v.get('validation_request', 'N/A')}")
+                    lines.append(f"- **Expected Result:** {v.get('validation_result', 'N/A')}")
+                    if v.get("developer_instructions"):
+                        lines.append("")
+                        lines.append("**Developer Verification Steps:**")
+                        lines.append("")
+                        lines.append("```bash")
+                        lines.append(v["developer_instructions"])
+                        lines.append("```")
+                    lines.append("")
+
                 if f.get("remediation"):
                     lines.append(f"**Remediation:** {f['remediation']}")
                     lines.append("")
@@ -267,6 +287,7 @@ class Reporter:
                     "likelihood": f.get("likelihood", 0),
                     "impact": f.get("impact", 0),
                     "status": f.get("status", ""),
+                    "validation": f.get("validation", None),
                 }
                 for f in findings
                 if f.get("status") != "N/A"

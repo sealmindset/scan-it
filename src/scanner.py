@@ -60,6 +60,12 @@ def parse_args():
         default=None,
         help="Path to custom config file",
     )
+    parser.add_argument(
+        "--ai-validate",
+        action="store_true",
+        default=False,
+        help="Enable AI-powered finding validation (requires AI provider credentials)",
+    )
     return parser.parse_args()
 
 
@@ -183,6 +189,22 @@ def main():
         count = severity_counts.get(sev, 0)
         if count:
             print(f"    {sev}: {count}")
+
+    # ----------------------------------------------------------------
+    # Phase 4.5: AI Validation (optional)
+    # ----------------------------------------------------------------
+    if args.ai_validate:
+        print_phase("AI VALIDATION", "Validating findings with AI analysis of source code...")
+
+        from ai_validator import AIValidator
+
+        validator = AIValidator(str(target))
+        analyzed = validator.validate_findings(analyzed)
+        validator.print_summary()
+
+        # Recount after false-positive removal
+        severity_counts = analyzer.count_by_severity(analyzed)
+        print(f"  Findings after AI validation: {len(analyzed)}")
 
     # ----------------------------------------------------------------
     # Phase 5: Reporting
