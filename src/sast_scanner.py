@@ -44,31 +44,68 @@ class SASTScanner:
         (rf'%s.*{_SQL_KW}|{_SQL_KW}.*%s', "Python % format SQL"),
     ]
 
-    # Functions whose f-string arguments are not SQL-related (UI, logging, etc.)
-    SAFE_FSTRING_CONTEXTS = re.compile(
+    # ── Context-aware false-positive filters ──────────────────────────
+    # Lines matching these are non-exploitable contexts shared across
+    # multiple vulnerability categories (logging, UI messages, etc.)
+    SAFE_DISPLAY_CONTEXTS = re.compile(
         r'\b(?:flash|log(?:ging)?\.(?:debug|info|warning|error|critical|exception)'
         r'|print|raise\s+\w+|\.add_message|messages\.(?:success|info|warning|error)'
         r'|render_template|jsonify|abort|redirect)\s*\(',
         re.IGNORECASE,
     )
 
+    # Lines that are string-only assignments (no executable sink)
+    SAFE_STRING_ASSIGNMENT = re.compile(
+        r'^\s*(?:#|//|/\*|\*|"""|\'{3})',  # comments / docstrings
+    )
+
+    # Configuration / example / placeholder files that commonly contain
+    # dummy secrets and should not be flagged.
+    SECRET_SAFE_FILES = re.compile(
+        r'(?:\.example|\.sample|\.template|\.dist|\.defaults'
+        r'|\.env\.example|docker-compose\.override'
+        r'|fixtures|seeds|factories|__mocks__)',
+        re.IGNORECASE,
+    )
+    SECRET_PLACEHOLDER_VALUES = re.compile(
+        r'["\'](?:changeme|CHANGEME|xxxx|your[_-]?(?:password|key|secret|token)[_-]?here'
+        r'|replace[_-]?me|TODO|FIXME|placeholder|example|test|dummy|fake|sample'
+        r'|password|secret|<[^>]+>|\*{3,}|\.{3,})["\']',
+        re.IGNORECASE,
+    )
+
     XSS_PATTERNS = [
         (r'dangerouslySetInnerHTML', "React dangerouslySetInnerHTML usage"),
-        (r'innerHTML\s*=', "Direct innerHTML assignment"),
+        (r'\.innerHTML\s*=', "Direct innerHTML assignment"),
         (r'document\.write\s*\(', "document.write usage"),
         (r'v-html\s*=', "Vue v-html directive"),
-        (r'outerHTML\s*=', "Direct outerHTML assignment"),
+        (r'\.outerHTML\s*=', "Direct outerHTML assignment"),
         (r'\|\s*safe\b', "Django/Jinja2 |safe filter (bypasses escaping)"),
     ]
+    # XSS patterns in sanitized/safe wrappers are not exploitable
+    XSS_SAFE_CONTEXTS = re.compile(
+        r'\b(?:DOMPurify\.sanitize|sanitize[_]?html|escape|markupsafe\.escape'
+        r'|bleach\.clean|xss_clean|html\.escape|cgi\.escape'
+        r'|encodeURIComponent|textContent\s*=)\s*\(',
+        re.IGNORECASE,
+    )
 
     DESER_PATTERNS = [
-        (r'pickle\.load', "Insecure pickle deserialization"),
-        (r'yaml\.load\s*\([^)]*(?!Loader)', "PyYAML unsafe load (missing Loader)"),
+        (r'pickle\.load(?!s\b)', "Insecure pickle deserialization"),
+        (r'yaml\.load\s*\([^)]*$', "PyYAML unsafe load (missing Loader)"),
+        (r'yaml\.load\s*\([^)]*\)(?!.*Loader)', "PyYAML unsafe load (missing Loader)"),
         (r'yaml\.unsafe_load', "PyYAML explicit unsafe_load"),
-        (r'\beval\s*\(', "eval() usage"),
-        (r'unserialize\s*\(', "PHP unserialize usage"),
-        (r'JSON\.parse\s*\(\s*(?:req|request)', "Unvalidated JSON parse from request"),
+        (r'(?<!\w)eval\s*\(\s*(?:request|req\b|self\.request|input\s*\(|sys\.stdin'
+         r'|f["\']|[a-zA-Z_]\w*\s*[\+%])', "eval() with dynamic/user input"),
+        (r'unserialize\s*\(\s*\$', "PHP unserialize with variable input"),
+        (r'JSON\.parse\s*\(\s*(?:req|request)\b', "Unvalidated JSON parse from request"),
     ]
+    # Safe deserialization wrappers
+    DESER_SAFE_CONTEXTS = re.compile(
+        r'\byaml\.(?:safe_load|CSafeLoader|SafeLoader)'
+        r'|pickle\.loads?\s*\(.*(?:hmac|signature|verify)',
+        re.IGNORECASE,
+    )
 
     CMD_INJECTION_PATTERNS = [
         (r'os\.system\s*\(', "os.system() usage"),
@@ -76,6 +113,12 @@ class SASTScanner:
         (r'child_process\.exec\s*\(', "Node child_process.exec"),
         (r'child_process\.execSync\s*\(', "Node child_process.execSync"),
     ]
+    # Command injection with only hardcoded string args is low-risk
+    CMD_SAFE_CONTEXTS = re.compile(
+        r'os\.system\s*\(\s*["\'][^"\']*["\']\s*\)'
+        r'|subprocess\.\w+\s*\(\s*\[["\']'
+        r'|child_process\.exec(?:Sync)?\s*\(\s*["\'][^"\']*["\']\s*\)',
+    )
 
     SCANNABLE_EXTENSIONS = {
         ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs",
@@ -286,11 +329,11 @@ class SASTScanner:
                                 continue
                             if line.strip().startswith("#") or line.strip().startswith("//"):
                                 continue
-                            # Skip SQL injection patterns in non-SQL contexts
-                            # (flash messages, logging, print, etc.)
-                            if (group_name == "SQL Injection"
-                                    and self.SAFE_FSTRING_CONTEXTS.search(line)):
+
+                            # ── Context-aware false-positive filtering ──
+                            if self._is_safe_context(group_name, line, rel_path):
                                 continue
+
                             if re.search(pattern, line, re.IGNORECASE):
                                 findings.append({
                                     "tool": "pattern-check",
@@ -306,6 +349,48 @@ class SASTScanner:
 
         print(f"  Pattern checks: {len(findings)} findings")
         return findings
+
+    def _is_safe_context(self, group_name: str, line: str, rel_path: str) -> bool:
+        """Return True if the line is a known-safe context for the given
+        vulnerability group, suppressing the finding as a false positive."""
+
+        if group_name == "SQL Injection":
+            # f-strings / format strings in flash, logging, print, etc.
+            return bool(self.SAFE_DISPLAY_CONTEXTS.search(line))
+
+        if group_name == "Hardcoded Secrets":
+            # Example / template / fixture files with placeholder values
+            if self.SECRET_SAFE_FILES.search(rel_path):
+                return True
+            if self.SECRET_PLACEHOLDER_VALUES.search(line):
+                return True
+            return False
+
+        if group_name == "Cross-Site Scripting (XSS)":
+            # Output inside a sanitizer wrapper is not exploitable
+            if self.XSS_SAFE_CONTEXTS.search(line):
+                return True
+            # innerHTML/outerHTML in logging or flash is not DOM access
+            if self.SAFE_DISPLAY_CONTEXTS.search(line):
+                return True
+            return False
+
+        if group_name == "Insecure Deserialization":
+            # yaml.safe_load or verified-signature pickle is fine
+            if self.DESER_SAFE_CONTEXTS.search(line):
+                return True
+            return False
+
+        if group_name == "Command Injection":
+            # Hardcoded-string-only commands are low-risk
+            if self.CMD_SAFE_CONTEXTS.search(line):
+                return True
+            # Command strings in flash/logging/print are not executed
+            if self.SAFE_DISPLAY_CONTEXTS.search(line):
+                return True
+            return False
+
+        return False
 
     def _normalize_severity(self, sev: str) -> str:
         """Normalize tool-specific severity labels."""
