@@ -21,14 +21,25 @@ shift || true
 MODE="${1:-full}"
 shift || true
 
-# Check for --ai-validate flag in remaining args
+# Check for flags in remaining args
 AI_VALIDATE=""
+FIX_IT=""
+FIX_IT_SCOPE=""
 EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --ai-validate)
             AI_VALIDATE="--ai-validate"
             shift
+            ;;
+        --fix-it)
+            FIX_IT="--fix-it"
+            if [[ $# -gt 1 ]] && [[ "$2" != --* ]]; then
+                FIX_IT_SCOPE="$2"
+                shift 2
+            else
+                shift
+            fi
             ;;
         *)
             EXTRA_ARGS+=("$1")
@@ -70,12 +81,19 @@ elif [ -f "${TARGET}/.env" ]; then
     ENV_FILE_FLAG="--env-file ${TARGET}/.env"
 fi
 
+# --fix-it requires writable mount (no :ro)
+if [ -n "$FIX_IT" ]; then
+    MOUNT_FLAG="-v $TARGET:/app"
+else
+    MOUNT_FLAG="-v $TARGET:/app:ro"
+fi
+
 docker run --rm \
-    -v "$TARGET":/app:ro \
+    $MOUNT_FLAG \
     -v "$OUTPUT_DIR":/output \
     ${ENV_FILE_FLAG:+$ENV_FILE_FLAG} \
     "$IMAGE_NAME" \
-    "$MODE" ${AI_VALIDATE:+$AI_VALIDATE} "${EXTRA_ARGS[@]}"
+    "$MODE" ${AI_VALIDATE:+$AI_VALIDATE} ${FIX_IT:+$FIX_IT} ${FIX_IT_SCOPE:+$FIX_IT_SCOPE} "${EXTRA_ARGS[@]}"
 
 echo ""
 echo "Reports saved to: $OUTPUT_DIR/"

@@ -66,6 +66,14 @@ def parse_args():
         default=False,
         help="Enable AI-powered finding validation (requires AI provider credentials)",
     )
+    parser.add_argument(
+        "--fix-it",
+        nargs="?",
+        const="default",
+        default=None,
+        metavar="SCOPE",
+        help="Fix validated findings. Default: CRITICAL+HIGH. Use '--fix-it all' for all severities. Implies --ai-validate.",
+    )
     return parser.parse_args()
 
 
@@ -89,6 +97,10 @@ def print_phase(name, description):
 def main():
     args = parse_args()
     start_time = time.time()
+
+    # --fix-it implies --ai-validate
+    if args.fix_it is not None:
+        args.ai_validate = True
 
     print_banner(args.mode, args.target)
 
@@ -207,6 +219,53 @@ def main():
         print(f"  Findings after AI validation: {len(analyzed)}")
 
     # ----------------------------------------------------------------
+    # Phase 4.7: AI Fix Generation (optional, requires --fix-it)
+    # ----------------------------------------------------------------
+    before_severity_counts = None
+    after_severity_counts = None
+
+    if args.fix_it is not None:
+        print_phase("AI FIX GENERATION", "Generating and applying fixes for validated findings...")
+
+        from ai_fixer import AIFixer
+
+        # Determine severity scope
+        if args.fix_it == "all":
+            fix_scope = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL"]
+        else:
+            fix_scope = ["CRITICAL", "HIGH"]
+
+        # Save "before" snapshot
+        before_severity_counts = dict(severity_counts)
+
+        fixer = AIFixer(str(target), fix_scope)
+        analyzed = fixer.fix_findings(analyzed)
+        fixer.print_summary()
+
+        # Verification re-scan
+        print_phase("VERIFICATION RE-SCAN", "Re-scanning to verify applied fixes...")
+
+        rescan_findings = []
+        if args.mode in ("full", "sast"):
+            rescan_findings.extend(SASTScanner(str(target), project_info).run())
+        if args.mode in ("full", "deps"):
+            rescan_findings.extend(DepsScanner(str(target), project_info).run())
+        if args.mode in ("full", "owasp"):
+            rescan_findings.extend(OWASPScanner(str(target), project_info).run())
+        if args.mode in ("full", "guardrails"):
+            rescan_findings.extend(GuardrailsScanner(str(target), project_info).run())
+
+        rescan_analyzer = Analyzer()
+        after_analyzed = rescan_analyzer.analyze(rescan_findings)
+        after_severity_counts = rescan_analyzer.count_by_severity(after_analyzed)
+
+        before_total = sum(v for k, v in before_severity_counts.items() if k != "INFORMATIONAL")
+        after_total = sum(v for k, v in after_severity_counts.items() if k != "INFORMATIONAL")
+        print(f"  Before fixes: {before_total} findings")
+        print(f"  After fixes:  {after_total} findings")
+        print(f"  Fixed:        {before_total - after_total}")
+
+    # ----------------------------------------------------------------
     # Phase 5: Reporting
     # ----------------------------------------------------------------
     print_phase("REPORTING", "Generating attestation documents...")
@@ -217,6 +276,9 @@ def main():
         project_info=project_info,
         scan_mode=args.mode,
         elapsed_seconds=elapsed,
+        fix_mode=args.fix_it is not None,
+        before_counts=before_severity_counts,
+        after_counts=after_severity_counts,
     )
 
     # Always generate markdown

@@ -15,11 +15,15 @@ from xml.dom.minidom import parseString
 class Reporter:
     """Phase 5: Generate attestation report documents."""
 
-    def __init__(self, output_dir: str, project_info: dict, scan_mode: str, elapsed_seconds: float):
+    def __init__(self, output_dir: str, project_info: dict, scan_mode: str, elapsed_seconds: float,
+                 fix_mode: bool = False, before_counts: dict = None, after_counts: dict = None):
         self.output_dir = Path(output_dir)
         self.project_info = project_info
         self.scan_mode = scan_mode
         self.elapsed = elapsed_seconds
+        self.fix_mode = fix_mode
+        self.before_counts = before_counts
+        self.after_counts = after_counts
         self.timestamp = datetime.now()
         self.date_str = self.timestamp.strftime("%Y-%m-%d")
 
@@ -65,6 +69,27 @@ class Reporter:
         lines.append("")
         lines.append("---")
         lines.append("")
+
+        # Fix-It Before/After Comparison (when --fix-it was used)
+        if self.fix_mode and self.before_counts and self.after_counts:
+            lines.append("## Fix-It: Before / After Comparison")
+            lines.append("")
+            lines.append("| Severity | Before | After | Fixed | Remaining |")
+            lines.append("|----------|--------|-------|-------|-----------|")
+            total_before = 0
+            total_after = 0
+            for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL"):
+                before = self.before_counts.get(sev, 0)
+                after = self.after_counts.get(sev, 0)
+                fixed = before - after
+                total_before += before
+                total_after += after
+                lines.append(f"| {sev} | {before} | {after} | {fixed} | {after} |")
+            lines.append(f"| **TOTAL** | **{total_before}** | **{total_after}** | "
+                         f"**{total_before - total_after}** | **{total_after}** |")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
 
         # Scan Coverage
         lines.append("## Scan Coverage")
@@ -166,6 +191,28 @@ class Reporter:
                         lines.append(v["developer_instructions"])
                         lines.append("```")
                     lines.append("")
+
+                # Fix Info section (populated by Phase 4.7)
+                if f.get("fix_info"):
+                    fi = f["fix_info"]
+                    if fi.get("status") != "skipped":
+                        lines.append("**Fix:**")
+                        lines.append("")
+                        lines.append(f"- **Classification:** {fi.get('classification', 'N/A')}")
+                        lines.append(f"- **Status:** {fi.get('status', 'N/A')}")
+                        lines.append(f"- **Fix Type:** {fi.get('fix_type', 'N/A')}")
+                        lines.append(f"- **Explanation:** {fi.get('explanation', 'N/A')}")
+                        if fi.get("diff"):
+                            lines.append("")
+                            lines.append("**Patch:**")
+                            lines.append("")
+                            lines.append("```diff")
+                            lines.append(fi["diff"])
+                            lines.append("```")
+                        if fi.get("guidance"):
+                            lines.append("")
+                            lines.append(f"**Guidance:** {fi['guidance']}")
+                        lines.append("")
 
                 if f.get("remediation"):
                     lines.append(f"**Remediation:** {f['remediation']}")
@@ -288,6 +335,7 @@ class Reporter:
                     "impact": f.get("impact", 0),
                     "status": f.get("status", ""),
                     "validation": f.get("validation", None),
+                    "fix_info": f.get("fix_info", None),
                 }
                 for f in findings
                 if f.get("status") != "N/A"
