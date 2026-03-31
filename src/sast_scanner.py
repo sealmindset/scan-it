@@ -31,14 +31,26 @@ class SASTScanner:
         (r'-----BEGIN (?:RSA |EC )?PRIVATE KEY-----', "Private key in source"),
     ]
 
+    # SQL keyword group used across patterns (whole-word match to avoid
+    # false positives on words like "selected", "inserted", "deleted", etc.)
+    _SQL_KW = r'(?:SELECT|INSERT\s+INTO|UPDATE\s+\S+\s+SET|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE|CREATE\s+TABLE)\b'
+
     SQLI_PATTERNS = [
-        (r'f"[^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*\{', "Python f-string SQL injection"),
-        (r"f'[^']*(?:SELECT|INSERT|UPDATE|DELETE)[^']*\{", "Python f-string SQL injection"),
-        (r'`[^`]*(?:SELECT|INSERT|UPDATE|DELETE)[^`]*\$\{', "JS template literal SQL injection"),
-        (r'["\'].*(?:SELECT|INSERT|UPDATE|DELETE).*["\']\s*\+', "String concat SQL injection"),
-        (r'\.format\(.*(?:SELECT|INSERT|UPDATE|DELETE)', "Python .format() SQL injection"),
-        (r'%s.*(?:SELECT|INSERT|UPDATE|DELETE)|(?:SELECT|INSERT|UPDATE|DELETE).*%s', "Python % format SQL"),
+        (rf'f"[^"]*{_SQL_KW}[^"]*\{{', "Python f-string SQL injection"),
+        (rf"f'[^']*{_SQL_KW}[^']*\{{", "Python f-string SQL injection"),
+        (rf'`[^`]*{_SQL_KW}[^`]*\$\{{', "JS template literal SQL injection"),
+        (rf'["\'].*{_SQL_KW}.*["\']\s*\+', "String concat SQL injection"),
+        (rf'\.format\(.*{_SQL_KW}', "Python .format() SQL injection"),
+        (rf'%s.*{_SQL_KW}|{_SQL_KW}.*%s', "Python % format SQL"),
     ]
+
+    # Functions whose f-string arguments are not SQL-related (UI, logging, etc.)
+    SAFE_FSTRING_CONTEXTS = re.compile(
+        r'\b(?:flash|log(?:ging)?\.(?:debug|info|warning|error|critical|exception)'
+        r'|print|raise\s+\w+|\.add_message|messages\.(?:success|info|warning|error)'
+        r'|render_template|jsonify|abort|redirect)\s*\(',
+        re.IGNORECASE,
+    )
 
     XSS_PATTERNS = [
         (r'dangerouslySetInnerHTML', "React dangerouslySetInnerHTML usage"),
@@ -273,6 +285,11 @@ class SASTScanner:
                             if "/test" in rel_path.lower() or "test_" in fname.lower():
                                 continue
                             if line.strip().startswith("#") or line.strip().startswith("//"):
+                                continue
+                            # Skip SQL injection patterns in non-SQL contexts
+                            # (flash messages, logging, print, etc.)
+                            if (group_name == "SQL Injection"
+                                    and self.SAFE_FSTRING_CONTEXTS.search(line)):
                                 continue
                             if re.search(pattern, line, re.IGNORECASE):
                                 findings.append({
