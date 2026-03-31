@@ -178,7 +178,7 @@ class Reporter:
                     v = f["validation"]
                     lines.append("**Validation:**")
                     lines.append("")
-                    lines.append(f"- **AI Assessment:** True Positive "
+                    lines.append(f"- **Assessment:** True Positive "
                                  f"(confidence: {v.get('confidence', 'N/A')})")
                     lines.append(f"- **Reasoning:** {v.get('reasoning', 'N/A')}")
                     lines.append(f"- **What to Test:** {v.get('validation_request', 'N/A')}")
